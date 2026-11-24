@@ -31,6 +31,10 @@
 </header>
 <main>
   <div id="stage" class="stage"><span style="color:#888">Chargement…</span></div>
+  <div class="bar" id="seriesBar" hidden>
+    <label for="series" style="color:var(--muted);font-size:13px">Série</label>
+    <select id="series" style="flex:1;padding:7px 10px;border:1px solid var(--line);border-radius:8px;font:inherit;background:var(--card)"></select>
+  </div>
   <div class="bar">
     <button id="prev" type="button">◀ Précédent</button>
     <input id="slider" type="range" min="0" max="0" value="0">
@@ -48,8 +52,11 @@
   var countEl = document.getElementById('count');
   var titleEl = document.getElementById('title');
   var subEl = document.getElementById('sub');
-  var images = [];
+  var images = [];      // frames of the selected series
+  var seriesList = [];  // [{uid, label, images}]
   var idx = 0;
+  var noteShown = false;
+  var seriesSel = document.getElementById('series');
 
   if (!study) {
     stage.innerHTML = '<div class="err">Aucun examen demandé. Ajoutez <code>?study=&lt;StudyInstanceUID&gt;</code> à l\'adresse.</div>';
@@ -77,7 +84,8 @@
     img.onload = function () {
       stage.innerHTML = '';
       stage.appendChild(img);
-      if (img.naturalWidth <= 64 || img.naturalHeight <= 64) {
+      if (!noteShown && (img.naturalWidth <= 64 || img.naturalHeight <= 64)) {
+        noteShown = true;
         // 8x8 demo pixels blown up look like a black square: say it out loud.
         var note = document.createElement('div');
         note.className = 'tiny';
@@ -91,6 +99,13 @@
     img.src = images[idx];
     countEl.textContent = (idx + 1) + ' / ' + images.length;
   }
+
+  function selectSeries(i) {
+    images = seriesList[i].images;
+    slider.max = images.length - 1;
+    show(Math.floor(images.length / 2));
+  }
+  seriesSel.onchange = function () { selectSeries(parseInt(seriesSel.value, 10)); };
 
   document.getElementById('prev').onclick = function () { show(idx - 1); };
   document.getElementById('next').onclick = function () { show(idx + 1); };
@@ -125,21 +140,38 @@
       titleEl.textContent = name;
       subEl.textContent = [pid && ('ID ' + pid), desc, date].filter(Boolean).join(' · ');
 
-      list.sort(function (a, b) {
-        var na = parseInt(val(a, '00200013') || '0', 10);
-        var nb = parseInt(val(b, '00200013') || '0', 10);
-        return na - nb;
+      // One stack per series: sorting the whole study by InstanceNumber would interleave series
+      // (scout 1, axial 1, scout 2, axial 2…), which is misleading in a medical viewer.
+      var bySeries = {};
+      list.forEach(function (o) {
+        var se = val(o, '0020000E'), sop = val(o, '00080018');
+        if (!se || !sop) return;
+        if (!bySeries[se]) bySeries[se] = { uid: se, number: parseInt(val(o, '00200011') || '0', 10),
+          label: [val(o, '00080060'), val(o, '0008103E')].filter(Boolean).join(' · '), items: [] };
+        bySeries[se].items.push({ n: parseInt(val(o, '00200013') || '0', 10), sop: sop });
       });
-      images = list.map(function (o) {
-        var series = val(o, '0020000E');
-        var sop = val(o, '00080018');
-        return '/dicom-web/studies/' + encodeURIComponent(study) +
-               '/series/' + encodeURIComponent(series) +
-               '/instances/' + encodeURIComponent(sop) + '/rendered';
-      }).filter(function (u) { return u.indexOf('undefined') === -1; });
-      if (!images.length) { fail('Aucune image dans cet examen.'); return; }
-      slider.max = images.length - 1;
-      show(Math.floor(images.length / 2));
+      seriesList = Object.keys(bySeries).map(function (k) { return bySeries[k]; })
+        .sort(function (a, b) { return a.number - b.number; });
+      seriesList.forEach(function (se) {
+        se.items.sort(function (a, b) { return a.n - b.n; });
+        se.images = se.items.map(function (it) {
+          return '/dicom-web/studies/' + encodeURIComponent(study) + '/series/' + encodeURIComponent(se.uid) +
+                 '/instances/' + encodeURIComponent(it.sop) + '/rendered';
+        });
+      });
+      if (!seriesList.length) { fail('Aucune image dans cet examen.'); return; }
+      seriesList.forEach(function (se, i) {
+        var o = document.createElement('option');
+        o.value = i;
+        o.textContent = 'S' + (se.number || i + 1) + (se.label ? ' — ' + se.label : '') + ' (' + se.images.length + ' im.)';
+        seriesSel.appendChild(o);
+      });
+      document.getElementById('seriesBar').hidden = seriesList.length < 2;
+      // start on the largest series (the diagnostic stack, not the scout)
+      var start = 0;
+      seriesList.forEach(function (se, i) { if (se.images.length > seriesList[start].images.length) start = i; });
+      seriesSel.value = start;
+      selectSeries(start);
     })
     .catch(function () { fail('Erreur réseau.'); });
 })();

@@ -306,6 +306,15 @@ test('full workflow', async (t) => {
     assert.equal((await clinic.call('GET', `/lite/studies/${usStudy.id}`)).status, 200);
     assert.equal((await clinic.call('GET', `/lite/studies/${ctStudy.id}/img/${iid}/0`)).status, 404);
     assert.equal((await outsider.call('GET', `/lite/studies/${ctStudy.id}`)).status, 401);
+    // OHIF without WebGL only knows the StudyInstanceUID: resolve it with the same access rules
+    const rv = await rad.call('GET', `/lite/resolve/${ctStudy.study_uid}`);
+    assert.equal(rv.status, 200);
+    assert.equal(rv.body.studyId, ctStudy.id);
+    assert.equal((await clinic.call('GET', `/lite/resolve/${ctStudy.study_uid}`)).status, 404, 'clinic must not resolve a personal study');
+    assert.equal((await clinic.call('GET', `/lite/resolve/${usStudy.study_uid}`)).body.studyId, usStudy.id);
+    assert.equal((await outsider.call('GET', `/lite/resolve/${ctStudy.study_uid}`)).status, 401);
+    assert.equal((await rad.call('GET', `/lite/resolve/${anonUid}`)).status, 404, 'anonymized copies are not studies');
+    assert.equal((await rad.call('GET', '/lite/resolve/1.2.abc')).status, 404);
     // share: anonymized copy only
     const pm = await colleague.call('GET', `/public/shares/${token()}/lite`);
     assert.equal(pm.status, 200);

@@ -119,6 +119,26 @@ async function sendImage(res, iid, frame, query) {
 }
 
 // ---------- Logged-in users (radiologist / clinic / admin) ----------
+
+/** OHIF only knows the StudyInstanceUID: find the RadKit study this user may open (for the no-WebGL redirect) */
+r.get(
+  '/lite/resolve/:uid',
+  requireAuth,
+  ah(async (req, res) => {
+    const uid = req.params.uid;
+    if (!/^[0-9.]{1,64}$/.test(uid)) throw notFound('Examen introuvable');
+    const row =
+      req.user.role === 'admin'
+        ? await one('SELECT id FROM studies WHERE study_uid=$1 ORDER BY created_at DESC LIMIT 1', [uid])
+        : await one(
+            `SELECT id FROM studies WHERE study_uid=$1 AND (owner_id=$2 OR client_id=$2)
+             ORDER BY (owner_id=$2) DESC, created_at DESC LIMIT 1`,
+            [uid, req.user.id]
+          );
+    if (!row) throw notFound('Examen introuvable');
+    res.json({ studyId: row.id });
+  })
+);
 r.get(
   '/lite/studies/:id',
   requireAuth,

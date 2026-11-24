@@ -1,4 +1,7 @@
+import { useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { api } from '../lib/api.js';
+import { PageLoader } from '../components/ui.jsx';
 import LiteViewer from '../components/LiteViewer.jsx';
 import { useAuth } from '../lib/auth.jsx';
 
@@ -28,4 +31,18 @@ export function ShareViewerPage() {
       backLabel="Retour au cas"
     />
   );
+}
+
+/** Entry from OHIF when the browser has no WebGL: OHIF only knows the StudyInstanceUID */
+export function ResolveViewerPage() {
+  const { uid } = useParams();
+  const nav = useNavigate();
+  useEffect(() => {
+    api
+      .get(`/lite/resolve/${encodeURIComponent(uid)}`)
+      .then(({ studyId }) => nav(`/viewer/${studyId}`, { replace: true }))
+      // not logged in (e.g. opened through a share link): server-rendered preview, gated by the share cookie
+      .catch(() => window.location.replace(`/simple-viewer?StudyInstanceUIDs=${encodeURIComponent(uid)}`));
+  }, [uid, nav]);
+  return <PageLoader />;
 }

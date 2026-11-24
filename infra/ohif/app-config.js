@@ -6,15 +6,18 @@
  *   return new Proxy(canvas.getContext('webgl'), handler)
  * without checking for null, so a browser with no WebGL dies with
  * "TypeError: Cannot create proxy with a non-object as target or handler".
- * RadKit answers that by switching to the server-rendered preview
- * (/simple-viewer: JPEG from Orthanc, no canvas, no WebGL). */
+ * RadKit answers that by opening its lite viewer (server-rendered frames, series, windowing, measures)
+ * on the app origin; /viewer/uid/<uid> falls back to /simple-viewer when there is no session (share links). */
 (function () {
   try {
     var c = document.createElement('canvas');
     var gl = c.getContext('webgl2') || c.getContext('webgl') || c.getContext('experimental-webgl');
     if (gl) return;
     if (/[?&]nofallback=1/.test(location.search)) return; // escape hatch: see OHIF's own error
-    location.replace('/simple-viewer' + location.search);
+    var uids = new URLSearchParams(location.search).get('StudyInstanceUIDs') || '';
+    var uid = uids.split(',')[0];
+    var app = location.protocol + '//' + location.hostname + (location.port === '8081' ? '' : location.port ? ':' + location.port : '');
+    location.replace(uid ? app + '/viewer/uid/' + encodeURIComponent(uid) : '/simple-viewer' + location.search);
   } catch (e) {}
 })();
 

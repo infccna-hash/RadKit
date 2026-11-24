@@ -21,7 +21,7 @@ import ClientUpload from './pages/client/ClientUpload.jsx';
 import ClientStudy from './pages/client/ClientStudy.jsx';
 import ClientHistory from './pages/client/ClientHistory.jsx';
 import AdminUsers from './pages/admin/Users.jsx';
-import { StudyViewerPage, ShareViewerPage } from './pages/ViewerPage.jsx';
+import { StudyViewerPage, ShareViewerPage, ResolveViewerPage } from './pages/ViewerPage.jsx';
 
 function Guard({ role, children }) {
   const { user } = useAuth();
@@ -46,6 +46,7 @@ function App() {
       <Route path="/password" element={<ChangePassword />} />
       <Route path="/s/:token" element={<SharePage />} />
       <Route path="/s/:token/view" element={<ShareViewerPage />} />
+      <Route path="/viewer/uid/:uid" element={<ResolveViewerPage />} />
       <Route path="/viewer/:id" element={<Guard><StudyViewerPage /></Guard>} />
       <Route path="/print/:id" element={<Guard><PrintReport /></Guard>} />
 
