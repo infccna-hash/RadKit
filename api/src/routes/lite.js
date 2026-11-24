@@ -8,6 +8,7 @@ import { studyForUser } from '../lib/access.js';
 import { orthanc } from '../lib/orthanc.js';
 import { audit } from '../lib/audit.js';
 import { liveShare } from './shares.js';
+import { safeDescription } from '../lib/deid.js';
 
 const r = Router();
 // A CT can be several hundred frames: allow bursts of image requests
@@ -176,11 +177,16 @@ r.get(
   imgLimiter,
   ah(async (req, res) => {
     const sh = await liveShare(req.params.token);
-    const s = await one('SELECT description, modalities FROM studies WHERE id=$1', [sh.study_id]);
+    const s = await one(
+      `SELECT s.description, s.modalities, s.dicom_patient_name, s.dicom_patient_id, s.dicom_birth_date, s.accession,
+              p.full_name AS patient_full_name
+       FROM studies s LEFT JOIN patients p ON p.id = s.patient_id WHERE s.id=$1`,
+      [sh.study_id]
+    );
     const series = await buildManifest(sh.anon_orthanc_id);
     await q('UPDATE shares SET view_count=view_count+1, last_viewed_at=now() WHERE id=$1', [sh.id]);
     await audit(req, 'share_lite_opened', sh.study_id, { share: sh.id });
-    res.json({ title: s?.description || 'Examen', patient: sh.anon_patient_id, date: null, modalities: s?.modalities || [], series });
+    res.json({ title: (s && safeDescription(s, s.patient_full_name)) || 'Examen', patient: sh.anon_patient_id, date: null, modalities: s?.modalities || [], series });
   })
 );
 

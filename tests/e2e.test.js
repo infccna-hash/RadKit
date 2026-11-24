@@ -355,6 +355,46 @@ test('full workflow', async (t) => {
     assert.equal(r.n, 0, 'advisory lock left held on a pooled connection');
   });
 
+  await t.test('de-identification (metamorphic): identifiers in free-text tags never reach a share', async () => {
+    const radId = (await rad.call('GET', '/auth/me')).body.user.id;
+    const CANARIES = ['zoubir', 'khalda', 'cnry7731', '19700203', 'canari', 'temoin'];
+    const leaks = (text) => CANARIES.filter((c) => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().includes(c));
+    let n = 0;
+    async function shareOf(descs) {
+      n++;
+      const oid = mock.seed({
+        patient: { PatientName: 'ZOUBIR^KHALDA', PatientID: 'CNRY7731', PatientBirthDate: '19700203', PatientSex: 'F' },
+        study: { StudyInstanceUID: `1.2.826.0.1.777.${n}`, StudyDate: '20261101', StudyDescription: descs.study,
+          InstitutionName: 'CLINIQUE CANARI', ReferringPhysicianName: 'DR^TEMOIN', AccessionNumber: 'CNRY7731-A' },
+        series: [{ uid: `1.2.826.0.1.777.${n}.1`, number: 1, description: descs.series, protocol: descs.protocol,
+          instances: [{ sop: `1.2.826.0.1.777.${n}.1.1`, n: 1 }, { sop: `1.2.826.0.1.777.${n}.1.2`, n: 2 }] }],
+      });
+      await modules.db.q('INSERT INTO pending_uploads (orthanc_study_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [oid, radId]);
+      const studyId = (await rad.call('POST', '/upload/finalize', { studies: [oid] })).body.results[0].studyId;
+      const r = await rad.call('POST', `/studies/${studyId}/shares`, { recipient: 'deid' });
+      const ready = await waitShare(rad, r.body.share.id);
+      assert.equal(ready.status, 'ready', ready.error);
+      const tok = r.body.url.split('/s/')[1];
+      const info = await colleague.call('GET', `/public/shares/${tok}`);
+      const lite = await colleague.call('GET', `/public/shares/${tok}/lite`);
+      const anonOid = [...mock.studies.entries()].find(([, st]) => st.main.StudyInstanceUID === ready.anon_study_uid)[0];
+      return { payload: JSON.stringify([info.body, lite.body]), tags: mock.allTags(anonOid) };
+    }
+
+    // source: clean free text → descriptions are useful context and must survive
+    const clean = await shareOf({ study: 'TDM THORAX', series: 'AXIAL 1MM', protocol: 'Thorax std' });
+    assert.deepEqual(leaks(clean.payload), []);
+    assert.deepEqual(leaks(JSON.stringify(clean.tags)), []);
+    assert.equal(clean.tags[0].StudyDescription, 'TDM THORAX');
+    assert.equal(clean.tags[0].SeriesDescription, 'AXIAL 1MM');
+
+    // follow-up: same study with the patient's identity typed into every free-text field
+    const dirty = await shareOf({ study: 'TDM THORAX ZOUBIR Khalda', series: 'AXIAL CNRY7731', protocol: 'Thorax Khalda 03/02/1970' });
+    assert.deepEqual(leaks(dirty.payload), [], 'identifier in public share payload');
+    assert.deepEqual(leaks(JSON.stringify(dirty.tags)), [], 'identifier in the anonymized DICOM copy');
+    assert.ok(dirty.tags[0].StudyDescription.includes('TDM THORAX'), 'clinical part of the description should be kept');
+  });
+
   await t.test('archive: a truncated ZIP is never delivered as a clean 200', async () => {
     const any = (await rad.call('GET', '/studies')).body.studies[0];
     const url = `/studies/${any.id}/download`;

@@ -97,16 +97,37 @@ One command, nothing to install but Docker:
 ./scripts/test.sh --local    # without Docker: Node 20+, python3 + pydicom + numpy, TEST_DATABASE_URL set
 ```
 
-23 checks run the real API against a real PostgreSQL with a mock Orthanc and a mock DeepSeek: auth & CSRF,
+The suite runs the real API against a real PostgreSQL with a mock Orthanc and a mock DeepSeek: auth & CSRF,
 clinic linking, upload → patient creation / attach / merge suggestion, reports and client visibility, AI never
 receiving identifiers, background share preparation (preparing → ready, failure never served), burned-in guard,
 per-study DICOMweb gate, lite viewer access rules, immediate revocation, patient removal, and robustness probes
 (37 malformed requests must never give a 500, upstream dying mid-download, migration lock, DB time zone); plus name-matcher unit tests.
 
+What each kind of test checks (and what decides "failed"):
+
+| File | Method (who makes the inputs) | Oracle (who decides it failed) |
+|---|---|---|
+| `e2e.test.js` | fixed scripted workflow | example assertions, access rules |
+| `e2e.test.js` de-identification | metamorphic pair: same study with / without the patient's identity typed into free text | no canary anywhere in the share; clean descriptions kept |
+| `properties.test.js` | seeded random studies (interleaved upload, duplicate InstanceNumbers, multi-frame), random names/descriptions | invariants: each series = exactly its own frames, ordered, deterministic; scrub removes identity and keeps clinical words; simple viewer never mixes series |
+| `static.test.js` | every static script shipped outside the Vite build | must parse; every page must be copied into the image |
+
+Property tests print their seed; replay a failure with `PROP_SEED=<seed> node --test properties.test.js`.
+
+Not covered by tests, checked by hand: text burned into pixels (confirmation step before sharing), and the real
+Orthanc anonymizer. For the latter, on the server:
+
+```bash
+python3 scripts/check_share_anon.py http://HOST/s/<token> "PATIENT NAME" <PatientID> <YYYYMMDD>
+```
+It scans the share's public JSON and every DICOM element of the downloaded copy for those identifiers.
+
 ## Security notes (Law 18-07 mindset)
 - Data stays on your server; Orthanc has no published port and requires credentials.
 - httpOnly session cookie, SameSite=Lax + mandatory `X-RadKit` header on writes (CSRF), bcrypt, login rate limit.
 - Clinics never see private notes, tags, other clinics' studies or the radiologist's personal studies.
+- Free-text descriptions kept for context are scrubbed of the patient's name, IDs and birth date (a description that
+  contains them is rewritten, series descriptions that contain them are dropped).
 - Shares point to a separate de-identified copy, built in the background by an Orthanc job (the link is returned at once; the colleague sees a waiting page until it is ready, and unfinished jobs resume after a restart); revoking deletes that copy and closes the image gate immediately.
 - Anonymization removes DICOM tags but **cannot remove text burned into pixels** — hence the confirmation step.
 - Everything sensitive is written to `audit_log`.

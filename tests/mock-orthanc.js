@@ -57,12 +57,16 @@ export function startMockOrthanc(port) {
         main: {
           StudyInstanceUID: tags.StudyInstanceUID, StudyDate: tags.StudyDate, StudyDescription: tags.StudyDescription,
           InstitutionName: tags.InstitutionName, AccessionNumber: tags.AccessionNumber || '',
+          ReferringPhysicianName: tags.ReferringPhysicianName || '',
         },
         patient: { PatientName: tags.PatientName, PatientID: tags.PatientID, PatientBirthDate: tags.PatientBirthDate, PatientSex: tags.PatientSex },
         series: new Set(),
       });
     if (!series.has(seriesId))
-      series.set(seriesId, { main: { Modality: tags.Modality, SeriesInstanceUID: tags.SeriesInstanceUID }, studyId, instances: new Set(), shared: tags.BurnedInAnnotation ? { BurnedInAnnotation: tags.BurnedInAnnotation } : {} });
+      series.set(seriesId, { main: { Modality: tags.Modality, SeriesInstanceUID: tags.SeriesInstanceUID,
+        ...(tags.SeriesNumber ? { SeriesNumber: String(tags.SeriesNumber) } : {}),
+        ...(tags.SeriesDescription ? { SeriesDescription: tags.SeriesDescription } : {}),
+        ...(tags.ProtocolName ? { ProtocolName: tags.ProtocolName } : {}) }, studyId, instances: new Set(), shared: tags.BurnedInAnnotation ? { BurnedInAnnotation: tags.BurnedInAnnotation } : {} });
     studies.get(studyId).series.add(seriesId);
     series.get(seriesId).instances.add(instId);
     instances.set(instId, { tags, studyId, seriesId });
@@ -100,8 +104,13 @@ export function startMockOrthanc(port) {
   app.get('/series/:id/ordered-slices', (req, res) => {
     const se = series.get(req.params.id);
     if (!se) return res.sendStatus(404);
-    const ids = [...se.instances];
-    res.json({ Type: 'Volume', Slices: ids.map((i) => `/instances/${i}/frames/0`), SlicesShort: ids.map((i) => [i, 0, 1]) });
+    const ids = [...se.instances].sort((a, b) => (Number(instances.get(a).tags.InstanceNumber) || 0) - (Number(instances.get(b).tags.InstanceNumber) || 0));
+    const frames = (i) => Number(instances.get(i).tags.NumberOfFrames) || 1;
+    res.json({
+      Type: 'Volume',
+      Slices: ids.flatMap((i) => Array.from({ length: frames(i) }, (_, f) => `/instances/${i}/frames/${f}`)),
+      SlicesShort: ids.map((i) => [i, 0, frames(i)]),
+    });
   });
   app.get('/instances/:id/study', (req, res) => {
     const i = instances.get(req.params.id);
@@ -115,7 +124,8 @@ export function startMockOrthanc(port) {
     res.json({
       Modality: i.tags.Modality,
       ...(ct ? { WindowCenter: '40\\60', WindowWidth: '80\\400' } : {}),
-      PixelSpacing: '0.7\\0.7', Rows: '256', Columns: '256', BitsStored: '16', SeriesNumber: '1',
+      PixelSpacing: '0.7\\0.7', Rows: '256', Columns: '256', BitsStored: '16', SeriesNumber: String(i.tags.SeriesNumber || 1),
+      ...(i.tags.SeriesDescription ? { SeriesDescription: i.tags.SeriesDescription } : {}),
       PhotometricInterpretation: ct ? 'MONOCHROME2' : 'RGB',
     });
   });
@@ -157,8 +167,13 @@ export function startMockOrthanc(port) {
       const newSeries = '2.25.' + BigInt('0x' + crypto.randomBytes(12).toString('hex')).toString();
       for (const iId of se.instances) {
         const tg = instances.get(iId).tags;
-        out = store({ ...tg, PatientName: 'ANONYME', PatientID: req.body.Replace.PatientID, PatientBirthDate: '', InstitutionName: '',
-          StudyInstanceUID: newUid, SeriesInstanceUID: newSeries, SOPInstanceUID: tg.SOPInstanceUID + '.9' });
+        // DICOM PS3.15 basic profile (what Orthanc applies): identifying + free-text tags removed unless kept
+        const keep = new Set(req.body.Keep || []);
+        const anon = { ...tg };
+        for (const k of ['PatientBirthDate', 'InstitutionName', 'ReferringPhysicianName', 'StudyDescription',
+          'SeriesDescription', 'ProtocolName', 'AccessionNumber']) if (!keep.has(k)) anon[k] = '';
+        Object.assign(anon, { PatientName: 'ANONYME' }, req.body.Replace || {});
+        out = store({ ...anon, StudyInstanceUID: newUid, SeriesInstanceUID: newSeries, SOPInstanceUID: tg.SOPInstanceUID + '.9' });
       }
     }
     return { ID: out.ParentStudy, Type: 'Study', PatientID: req.body.Replace.PatientID };
@@ -229,7 +244,24 @@ export function startMockOrthanc(port) {
     res.type('application/zip').send(buf);
   });
 
+  /** Seed a study directly: {patient:{...}, study:{...}, series:[{uid, number, modality, description, protocol, instances:[{sop, n, frames}]}]} */
+  function seed({ patient, study, series: list }) {
+    let studyId;
+    for (const se of list)
+      for (const inst of se.instances) {
+        studyId = store({
+          ...patient, ...study,
+          SeriesInstanceUID: se.uid, SeriesNumber: se.number, Modality: se.modality || 'CT',
+          SeriesDescription: se.description || '', ProtocolName: se.protocol || '',
+          SOPInstanceUID: inst.sop, InstanceNumber: inst.n, NumberOfFrames: inst.frames || 1,
+        }).ParentStudy;
+      }
+    return studyId;
+  }
+  const allTags = (studyId) =>
+    [...studies.get(studyId).series].flatMap((s) => [...series.get(s).instances].map((i) => instances.get(i).tags));
+
   return new Promise((resolve) => {
-    const server = app.listen(port, () => resolve({ server, studies, state }));
+    const server = app.listen(port, () => resolve({ server, studies, state, seed, allTags, series, instances }));
   });
 }
