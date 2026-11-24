@@ -4,3 +4,5 @@ dist/
 *.log
 .env.bak-*
 .env.bak*
+__pycache__/
+*.pyc
