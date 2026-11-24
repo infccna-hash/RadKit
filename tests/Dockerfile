@@ -11,6 +11,8 @@ COPY tests/package*.json tests/
 RUN cd tests && (npm ci || npm install)
 COPY api/src api/src
 COPY api/sql api/sql
+COPY infra/ohif infra/ohif
+COPY infra/nginx infra/nginx
 COPY tests/*.js tests/*.py tests/
 WORKDIR /repo/tests
 CMD ["node", "--test"]

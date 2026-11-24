@@ -83,10 +83,10 @@ export const orthanc = {
   preview: (id, frame) => call('GET', `/instances/${encodeURIComponent(id)}/frames/${frame}/preview`, { raw: true }),
 
   /** Same as anonymizeStudy but as an Orthanc job, polled until done. Returns the new study ID. */
-  async anonymizeStudyJob(id, { patientId, keep = [] }) {
+  async anonymizeStudyJob(id, { patientId, keep = [], replace = {} }) {
     const job = await call('POST', `/studies/${encodeURIComponent(id)}/anonymize`, {
       json: {
-        Replace: { PatientName: 'ANONYME', PatientID: patientId },
+        Replace: { ...replace, PatientName: 'ANONYME', PatientID: patientId },
         Keep: keep,
         KeepPrivateTags: false,
         Force: true,

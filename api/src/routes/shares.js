@@ -13,6 +13,7 @@ import { config } from '../config.js';
 import { invalidateAuthCache } from './internal.js';
 import { enqueuePrepare } from '../lib/shareJobs.js';
 import { sendArchive } from '../lib/archive.js';
+import { safeDescription } from '../lib/deid.js';
 
 const r = Router();
 
@@ -134,7 +135,7 @@ r.get(
         expiresAt: sh.expires_at,
         from,
         study: {
-          description: s.description,
+          description: safeDescription(s, (await one('SELECT full_name FROM patients WHERE id=$1', [s.patient_id]))?.full_name),
           modalities: s.modalities,
           bodyPart: s.body_part,
           seriesCount: s.series_count,
