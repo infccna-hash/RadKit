@@ -1,0 +1,23 @@
+# Throwaway Postgres (in RAM) + test runner. Used by scripts/test.sh
+name: radkit-test
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: radkit_test
+    tmpfs: /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d radkit_test"]
+      interval: 2s
+      retries: 30
+
+  tests:
+    build:
+      context: ..
+      dockerfile: tests/Dockerfile
+    environment:
+      TEST_DATABASE_URL: postgres://postgres:postgres@db:5432/radkit_test
+    depends_on:
+      db:
+        condition: service_healthy

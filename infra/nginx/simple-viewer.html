@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aperçu simple — RadKit</title>
+<style>
+  :root { --bg:#f7f7f8; --card:#fff; --line:#e3e3e7; --ink:#15161a; --muted:#6b6f76; --accent:#0b6bcb; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 system-ui,"Segoe UI",Roboto,Arial,sans-serif; background:var(--bg); color:var(--ink); }
+  header { background:var(--card); border-bottom:1px solid var(--line); padding:12px 18px; display:flex; gap:18px; align-items:baseline; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  header .meta { color:var(--muted); font-size:13px; }
+  main { max-width:1100px; margin:18px auto; padding:0 14px; }
+  .stage { background:#000; border-radius:10px; display:flex; align-items:center; justify-content:center; min-height:420px; overflow:hidden; }
+  .stage img { max-width:100%; max-height:70vh; display:block; image-rendering:auto; }
+  .bar { display:flex; align-items:center; gap:12px; margin-top:12px; }
+  .bar input[type=range] { flex:1; }
+  button { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 14px; font:inherit; cursor:pointer; }
+  button:hover { border-color:var(--accent); color:var(--accent); }
+  .count { color:var(--muted); font-variant-numeric:tabular-nums; min-width:110px; text-align:right; }
+  .hint { color:var(--muted); font-size:13px; margin-top:14px; }
+  .tiny { margin-top:10px; color:#8a5a00; background:#fff7e6; border:1px solid #f0d9a8; padding:8px 12px; border-radius:8px; font-size:13px; }
+  .err { background:#fff2f2; border:1px solid #f3c2c2; color:#8a1c1c; padding:14px 16px; border-radius:8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Aperçu simple</h1>
+  <span class="meta" id="sub"></span>
+</header>
+<main>
+  <div id="stage" class="stage"><span style="color:#888">Chargement…</span></div>
+  <div class="bar">
+    <button id="prev" type="button">◀ Précédent</button>
+    <input id="slider" type="range" min="0" max="0" value="0">
+    <button id="next" type="button">Suivant ▶</button>
+    <span class="count" id="count"></span>
+  </div>
+  <p class="hint">Aperçu 2D rendu par le serveur (JPEG) — ne demande pas WebGL. Pour le diagnostic complet (fenêtrage, mesures, séries), ouvrez la visionneuse.</p>
+</main>
+<script>
+(function () {
+  var params = new URLSearchParams(location.search);
+  var study = params.get('study') || params.get('StudyInstanceUIDs') || params.get('StudyInstanceUID');
+  var stage = document.getElementById('stage');
+  var slider = document.getElementById('slider');
+  var countEl = document.getElementById('count');
+  var titleEl = document.getElementById('title');
+  var subEl = document.getElementById('sub');
+  var images = [];
+  var idx = 0;
+
+  if (!study) {
+    stage.innerHTML = '<div class="err">Aucun examen demandé. Ajoutez <code>?study=&lt;StudyInstanceUID&gt;</code> à l\'adresse.</div>';
+    return;
+  }
+
+  function fail(msg) {
+    // On :8081 "/" is the OHIF viewer, not the login form — send people to the
+    // app on the same host (port 80) instead, where the session is created.
+    var appUrl = location.protocol + '//' + location.hostname + (location.port === '8081' ? '/' : '/');
+    stage.innerHTML = '<div class="err"><b>' + msg + '</b><br>' +
+      'Ouvrez <a href="' + appUrl + '">' + appUrl + '</a>, connectez-vous, puis rouvrez l\'examen.' +
+      '<br><button id="retry" type="button" style="margin-top:10px">J\'ai ouvert ma session — réessayer</button></div>';
+    var b = document.getElementById('retry');
+    if (b) b.onclick = function () { location.reload(); };
+  }
+
+  function show(i) {
+    if (!images.length) return;
+    idx = Math.max(0, Math.min(images.length - 1, i));
+    slider.value = idx;
+    var img = new Image();
+    img.alt = 'Image ' + (idx + 1);
+    img.onerror = function () { fail('Cette image n\'a pas pu être chargée.'); };
+    img.onload = function () {
+      stage.innerHTML = '';
+      stage.appendChild(img);
+      if (img.naturalWidth <= 64 || img.naturalHeight <= 64) {
+        // 8x8 demo pixels blown up look like a black square: say it out loud.
+        var note = document.createElement('div');
+        note.className = 'tiny';
+        note.textContent = 'Données de démonstration : image ' + img.naturalWidth + '\u00d7' + img.naturalHeight + ' px.';
+        stage.parentNode.insertBefore(note, stage.nextSibling);
+        img.style.imageRendering = 'pixelated';
+        img.style.width = '320px';
+        img.style.height = '320px';
+      }
+    };
+    img.src = images[idx];
+    countEl.textContent = (idx + 1) + ' / ' + images.length;
+  }
+
+  document.getElementById('prev').onclick = function () { show(idx - 1); };
+  document.getElementById('next').onclick = function () { show(idx + 1); };
+  slider.oninput = function () { show(parseInt(slider.value, 10)); };
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowLeft') { show(idx - 1); e.preventDefault(); }
+    if (e.key === 'ArrowRight') { show(idx + 1); e.preventDefault(); }
+  });
+
+  fetch('/dicom-web/studies/' + encodeURIComponent(study) + '/metadata', { credentials: 'include' })
+    .then(function (r) {
+      if (r.status === 401) { fail('Session expirée.'); return null; }
+      if (!r.ok) { fail('Examen indisponible (' + r.status + ').'); return null; }
+      return r.json();
+    })
+    .then(function (meta) {
+      if (!meta) return;
+      var list = Array.isArray(meta) ? meta : [meta];
+      var first = list[0] || {};
+      var val = function (o, tag, field) {
+        var e = o[tag];
+        if (!e) return '';
+        var v = e.Value !== undefined ? e.Value : e;
+        v = Array.isArray(v) ? v[0] : v;
+        return (v && typeof v === 'object') ? (v[field || 'Alphabetic'] || '') : (v || '');
+      };
+      var name = val(first, '00100010') || '(sans nom)';
+      var pid = val(first, '00100020');
+      var desc = val(first, '00081030');
+      var date = val(first, '00080020');
+      if (date && date.length === 8) date = date.slice(6, 8) + '/' + date.slice(4, 6) + '/' + date.slice(0, 4);
+      titleEl.textContent = name;
+      subEl.textContent = [pid && ('ID ' + pid), desc, date].filter(Boolean).join(' · ');
+
+      list.sort(function (a, b) {
+        var na = parseInt(val(a, '00200013') || '0', 10);
+        var nb = parseInt(val(b, '00200013') || '0', 10);
+        return na - nb;
+      });
+      images = list.map(function (o) {
+        var series = val(o, '0020000E');
+        var sop = val(o, '00080018');
+        return '/dicom-web/studies/' + encodeURIComponent(study) +
+               '/series/' + encodeURIComponent(series) +
+               '/instances/' + encodeURIComponent(sop) + '/rendered';
+      }).filter(function (u) { return u.indexOf('undefined') === -1; });
+      if (!images.length) { fail('Aucune image dans cet examen.'); return; }
+      slider.max = images.length - 1;
+      show(Math.floor(images.length / 2));
+    })
+    .catch(function () { fail('Erreur réseau.'); });
+})();
+</script>
+</body>
+</html>

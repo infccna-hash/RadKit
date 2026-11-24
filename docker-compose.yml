@@ -1,0 +1,84 @@
+# RadKit — self-hosted teleradiology workspace
+# Usage: ./scripts/init.sh  (once, generates .env)  then  docker compose up -d --build
+services:
+  db:
+    image: postgres:16-alpine@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: ${TZ:-Africa/Algiers}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      retries: 20
+
+  orthanc:
+    # Pin a tag (e.g. orthancteam/orthanc:25.x.x) once you have tested one on your server.
+    image: orthancteam/orthanc:26.04@sha256:06b8baab0c63cd58de5474a74b64096a82ea3f7eab2aa471e217cc48c9ae11bf
+    restart: unless-stopped
+    environment:
+      ORTHANC__NAME: RadKit
+      ORTHANC__AUTHENTICATION_ENABLED: "true"
+      ORTHANC__REGISTERED_USERS: '{"${ORTHANC_USER}": "${ORTHANC_PASSWORD}"}'
+      ORTHANC__REMOTE_ACCESS_ALLOWED: "true"
+      # Never let an upload replace an image already stored (integrity: same SOPInstanceUID = AlreadyStored)
+      ORTHANC__OVERWRITE_INSTANCES: "false"
+      TZ: ${TZ:-Africa/Algiers}
+      ORTHANC__STABLE_AGE: "30"
+      # ZIP archives built by jobs (downloads with Content-Length): keep several so parallel downloads don't evict each other
+      ORTHANC__MEDIA_ARCHIVE_SIZE: "10"
+      DICOM_WEB_PLUGIN_ENABLED: "true"
+      ORTHANC__DICOM_WEB__ROOT: /dicom-web/
+      ORTHANC__DICOM_WEB__ENABLE_WADO: "true"
+      ORTHANC__DICOM_WEB__STUDIES_METADATA: Full
+      ORTHANC__DICOM_WEB__SERIES_METADATA: Full
+      # Optional: receive studies straight from modalities over DICOM (C-STORE) on 4242
+      ORTHANC__DICOM_AET: RADKIT
+    volumes:
+      - orthanc-data:/var/lib/orthanc/db
+    # Not published: only the api and nginx talk to Orthanc.
+    # Uncomment to accept C-STORE from modalities on your LAN:
+    # ports: ["4242:4242"]
+
+  api:
+    build: ./api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      ORTHANC_URL: http://orthanc:8042
+      PORT: "4000"
+      TZ: ${TZ:-Africa/Algiers}
+    depends_on:
+      db:
+        condition: service_healthy
+      orthanc:
+        condition: service_started
+
+  ohif:
+    image: ohif/app@sha256:40e509850ffaa45db50e64122387a8592b2b82965003568bd8f19f1cfb5ff2d3
+    restart: unless-stopped
+    environment:
+      APP_CONFIG: /usr/share/nginx/html/app-config.js
+    volumes:
+      - ./infra/ohif/app-config.js:/usr/share/nginx/html/app-config.js:ro
+
+  web:
+    build:
+      context: .
+      dockerfile: infra/nginx/Dockerfile
+    restart: unless-stopped
+    environment:
+      ORTHANC_BASIC_B64: ${ORTHANC_BASIC_B64}
+    ports:
+      - "${APP_PORT:-80}:80"        # app + API
+      - "${VIEWER_PORT:-8081}:8081" # OHIF viewer
+    depends_on: [api, ohif, orthanc]
+
+volumes:
+  db-data:
+  orthanc-data:
