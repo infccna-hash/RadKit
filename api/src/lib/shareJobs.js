@@ -13,7 +13,9 @@ const KEEP_ALWAYS = ['BodyPartExamined', 'PatientSex', 'PatientAge'];
  * reaches the anonymized copy, while clean descriptions stay as useful clinical context.
  */
 export async function deidPlan(sh) {
-  const tokens = tokensForStudy(sh, sh.patient_full_name);
+  // Ask Orthanc for the study's own PatientName (all groups): covers studies imported before the raw name was stored
+  const st = await orthanc.study(sh.orthanc_id).catch(() => null);
+  const tokens = tokensForStudy({ ...sh, orthanc_patient_name: st?.PatientMainDicomTags?.PatientName }, sh.patient_full_name);
   const keep = [...KEEP_ALWAYS];
   const replace = {};
   if (sh.description) {
@@ -52,8 +54,9 @@ async function run() {
 
 export async function prepare(shareId) {
   const sh = await one(
-    `SELECT sh.*, s.orthanc_id, s.description, s.dicom_patient_name, s.dicom_patient_id, s.dicom_birth_date, s.accession,
-            p.full_name AS patient_full_name
+    `SELECT sh.*, s.orthanc_id, s.description, s.dicom_patient_name, s.dicom_patient_name_raw, s.dicom_patient_id, s.dicom_birth_date, s.accession,
+            p.full_name AS patient_full_name,
+            (SELECT string_agg(pi.dicom_name, ' ') FROM patient_identifiers pi WHERE pi.patient_id = s.patient_id) AS raw_names
      FROM shares sh JOIN studies s ON s.id = sh.study_id LEFT JOIN patients p ON p.id = s.patient_id WHERE sh.id = $1`,
     [shareId]
   );

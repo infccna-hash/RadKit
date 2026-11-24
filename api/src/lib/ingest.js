@@ -29,9 +29,10 @@ export async function ingestStudy({ orthancId, ownerId, clientId = null, uploade
       study = (
         await c.query(
           `UPDATE studies SET orthanc_id=$2, series_count=$3, instance_count=$4, modalities=$5,
-             clinical_info=COALESCE($6, clinical_info), client_id=COALESCE(client_id, $7)
+             clinical_info=COALESCE($6, clinical_info), client_id=COALESCE(client_id, $7),
+             dicom_patient_name_raw=COALESCE($8, dicom_patient_name_raw)
            WHERE id=$1 RETURNING *`,
-          [existing.id, s.orthancId, s.seriesCount, s.instanceCount, s.modalities, clinicalInfo, clientId]
+          [existing.id, s.orthancId, s.seriesCount, s.instanceCount, s.modalities, clinicalInfo, clientId, s.patient.rawName || null]
         )
       ).rows[0];
     } else {
@@ -40,12 +41,12 @@ export async function ingestStudy({ orthancId, ownerId, clientId = null, uploade
         await c.query(
           `INSERT INTO studies (owner_id, client_id, uploaded_by, orthanc_id, study_uid, accession, study_date,
              description, modalities, body_part, institution, referring, series_count, instance_count,
-             dicom_patient_name, dicom_patient_id, dicom_birth_date, dicom_sex, clinical_info, priority)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING *`,
+             dicom_patient_name, dicom_patient_id, dicom_birth_date, dicom_sex, clinical_info, priority, dicom_patient_name_raw)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) RETURNING *`,
           [
             ownerId, clientId, uploadedBy, s.orthancId, s.studyUid, s.accession, s.studyDate,
             s.description, s.modalities, s.bodyPart, s.institution, s.referring, s.seriesCount, s.instanceCount,
-            s.patient.name, s.patient.id, s.patient.birthDate, s.patient.sex, clinicalInfo, priority,
+            s.patient.name, s.patient.id, s.patient.birthDate, s.patient.sex, clinicalInfo, priority, s.patient.rawName || null,
           ]
         )
       ).rows[0];

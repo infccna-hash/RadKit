@@ -5,7 +5,8 @@ Usage (on the server, or any machine that can reach the app):
     pip install pydicom
     python3 scripts/check_share_anon.py http://HOST/s/<token> "BENSMAIN YASSINE" P123456 19800101 [more canaries...]
 
-Give it the patient's real name, IDs, birth date, institution... It downloads the share ZIP and the public JSON
+Give it the patient's real name (Latin AND Arabic spellings if known), IDs, birth date in the spellings used
+locally (19800101, 01/01/1980, 1980/01/01), institution... It downloads the share ZIP and the public JSON
 payloads, walks EVERY DICOM element (sequences and private tags included) and reports any canary it finds.
 Exit code 0 = clean, 1 = identifier found, 2 = could not check.
 
@@ -26,8 +27,33 @@ except ImportError:
     sys.exit("pydicom is required: pip install pydicom")
 
 
+# Same folding as api/src/lib/deid.js: any script (Latin, Arabic...), combining marks removed (accents, harakat),
+# Arabic letter variants folded, tatweel dropped, Arabic-Indic digits mapped to 0-9.
+AR_FOLD = str.maketrans({"\u0623": "\u0627", "\u0625": "\u0627", "\u0622": "\u0627", "\u0671": "\u0627",
+                         "\u0649": "\u064a", "\u0629": "\u0647", "\u0624": "\u0648", "\u0626": "\u064a",
+                         "\u0640": None,
+                         **{chr(0x660 + i): str(i) for i in range(10)}, **{chr(0x6F0 + i): str(i) for i in range(10)}})
+
+
 def norm(s):
-    return unicodedata.normalize("NFD", str(s)).encode("ascii", "ignore").decode().lower()
+    t = unicodedata.normalize("NFKD", str(s))
+    t = "".join(ch for ch in t if not unicodedata.category(ch).startswith("M")).lower()
+    return t.translate(AR_FOLD)
+
+
+def canary_tokens(args):
+    """Words of >=3 letters/digits in any script; dates and IDs keep / . - inside them."""
+    out = set()
+    for c in args:
+        for w in re.split(r"[^\w/.-]+", norm(c)):
+            w = w.strip("/.-_")
+            if len(w) >= 3:
+                out.add(w)
+    return out
+
+
+def patterns(tokens):
+    return {t: re.compile(rf"(?<![^\W_]){re.escape(t)}(?![^\W_])") for t in tokens}
 
 
 def main():
@@ -39,12 +65,8 @@ def main():
         print("First argument must be a share link: http://HOST/s/<token>")
         return 2
     base, token = m.groups()
-    tokens = set()
-    for c in sys.argv[2:]:
-        for w in re.split(r"[^a-z0-9/.-]+", norm(c)):
-            if len(w) >= 3:
-                tokens.add(w)
-    pats = {t: re.compile(rf"(?<![a-z0-9]){re.escape(t)}(?![a-z0-9])") for t in tokens}
+    tokens = canary_tokens(sys.argv[2:])
+    pats = patterns(tokens)
     hits = []
 
     def scan(where, text):

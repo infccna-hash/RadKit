@@ -357,13 +357,13 @@ test('full workflow', async (t) => {
 
   await t.test('de-identification (metamorphic): identifiers in free-text tags never reach a share', async () => {
     const radId = (await rad.call('GET', '/auth/me')).body.user.id;
-    const CANARIES = ['zoubir', 'khalda', 'cnry7731', '19700203', 'canari', 'temoin'];
+    const CANARIES = ['zoubir', 'khalda', 'cnry7731', '19700203', 'canari', 'temoin', 'زبير', 'خالدة'];
     const leaks = (text) => CANARIES.filter((c) => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().includes(c));
     let n = 0;
     async function shareOf(descs) {
       n++;
       const oid = mock.seed({
-        patient: { PatientName: 'ZOUBIR^KHALDA', PatientID: 'CNRY7731', PatientBirthDate: '19700203', PatientSex: 'F' },
+        patient: { PatientName: descs.pn || 'ZOUBIR^KHALDA', PatientID: 'CNRY7731', PatientBirthDate: '19700203', PatientSex: 'F' },
         study: { StudyInstanceUID: `1.2.826.0.1.777.${n}`, StudyDate: '20261101', StudyDescription: descs.study,
           InstitutionName: 'CLINIQUE CANARI', ReferringPhysicianName: 'DR^TEMOIN', AccessionNumber: 'CNRY7731-A' },
         series: [{ uid: `1.2.826.0.1.777.${n}.1`, number: 1, description: descs.series, protocol: descs.protocol,
@@ -393,6 +393,12 @@ test('full workflow', async (t) => {
     assert.deepEqual(leaks(dirty.payload), [], 'identifier in public share payload');
     assert.deepEqual(leaks(JSON.stringify(dirty.tags)), [], 'identifier in the anonymized DICOM copy');
     assert.ok(dirty.tags[0].StudyDescription.includes('TDM THORAX'), 'clinical part of the description should be kept');
+
+    // Arabic: DICOM name with an Arabic ideographic group, Arabic typed into the free text
+    const arabic = await shareOf({ pn: 'ZOUBIR^KHALDA=زبير^خالدة', study: 'TDM THORAX زبير خالدة', series: 'محوري خالدة', protocol: 'صدر' });
+    assert.deepEqual(leaks(arabic.payload), [], 'Arabic identifier in public share payload');
+    assert.deepEqual(leaks(JSON.stringify(arabic.tags)), [], 'Arabic identifier in the anonymized DICOM copy');
+    assert.ok(arabic.tags[0].StudyDescription.includes('TDM THORAX'));
   });
 
   await t.test('archive: a truncated ZIP is never delivered as a clean 200', async () => {

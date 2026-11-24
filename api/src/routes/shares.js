@@ -135,7 +135,10 @@ r.get(
         expiresAt: sh.expires_at,
         from,
         study: {
-          description: safeDescription(s, (await one('SELECT full_name FROM patients WHERE id=$1', [s.patient_id]))?.full_name),
+          description: safeDescription(
+            { ...s, raw_names: (await one("SELECT string_agg(dicom_name, ' ') AS n FROM patient_identifiers WHERE patient_id=$1", [s.patient_id]))?.n },
+            (await one('SELECT full_name FROM patients WHERE id=$1', [s.patient_id]))?.full_name
+          ),
           modalities: s.modalities,
           bodyPart: s.body_part,
           seriesCount: s.series_count,

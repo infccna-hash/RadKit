@@ -164,3 +164,6 @@ ALTER TABLE shares ADD COLUMN IF NOT EXISTS error TEXT;
 ALTER TABLE shares ADD COLUMN IF NOT EXISTS prepared_at TIMESTAMPTZ;
 ALTER TABLE shares ALTER COLUMN anon_orthanc_id DROP NOT NULL;
 ALTER TABLE shares ALTER COLUMN anon_study_uid DROP NOT NULL;
+
+-- v1.3: raw DICOM PatientName with every group (LATIN=ARABIC=PHONETIC), used for de-identification
+ALTER TABLE studies ADD COLUMN IF NOT EXISTS dicom_patient_name_raw TEXT;

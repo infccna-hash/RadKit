@@ -121,6 +121,19 @@ test('property: lite manifest = exactly each series’ own frames, in Orthanc or
 const FIRST = ['Mohamed', 'Mohammed', 'Fatima', 'Khalda', 'Abdelkader', 'Yacine', 'Saïda', 'Lakhdar', 'Nour', 'Zoubir'];
 const LAST = ['Benali', 'Bensmail', 'Hadj Ahmed', 'Bouchareb', 'Mansouri', 'Djebbar', 'Ould Brahim', 'Laghouati'];
 const CLINICAL = ['TDM', 'THORAX', 'ABDOMEN', 'IRM', 'CEREBRALE', 'SANS', 'AVEC', 'INJECTION', 'AXIAL', '1MM', 'FACE', 'PROFIL', 'ECHO', 'PELVIS', 'C+'];
+// Arabic: names as technicians type them, with/without harakat, alef/ya/ta-marbuta variants, tatweel
+const AR_FIRST = ['مراد', 'فاطمة', 'عبد القادر', 'خالدة', 'لخضر', 'نور الدين', 'سعيدة', 'ياسين'];
+const AR_LAST = ['بن سعيد', 'بوشارب', 'منصوري', 'جبار', 'ولد إبراهيم', 'الأغواطي', 'حاج أحمد'];
+const AR_CLINICAL = ['أشعة', 'صدر', 'بطن', 'مقطعية', 'تصوير', 'بالرنين'];
+const arVariant = (r, w) =>
+  r.pick([
+    w,
+    w.replace(/[أإآ]/g, 'ا'), // alef without hamza
+    w.replace(/ة/g, 'ه').replace(/ي(?=\s|$)/g, 'ى'), // ta marbuta / alef maqsura swaps
+    w.replace(/(.)/, '$1َ'), // a fatha on the first letter
+    w.replace(/(..)/, '$1ـ'), // tatweel
+  ]);
+const toArabicDigits = (s) => s.replace(/\d/g, (d) => String.fromCharCode(0x660 + Number(d)));
 const variant = (r, w) => r.pick([w, w.toUpperCase(), w.toLowerCase(), w.normalize('NFD').replace(/[̀-ͯ]/g, '')]);
 
 test('property: scrubbing removes every identity token and keeps clinical words', () => {
@@ -143,6 +156,39 @@ test('property: scrubbing removes every identity token and keeps clinical words'
     for (const c of clinical) assert.ok(out.includes(c.toUpperCase()), `${ctx}: clinical word "${c}" lost → "${out}"`);
     assert.equal(deid.scrub(out, tokens), out, `${ctx}: scrub must be idempotent`);
     // no false alarm on purely clinical text
+    assert.equal(deid.containsIdentifiers(clinical.join(' '), tokens), false, `${ctx}: false positive`);
+  }
+});
+
+test('regression: Arabic names are tokenised and scrubbed (reported in review)', () => {
+  const t = deid.identifierTokens({ names: ['بن سعيد مراد'] });
+  assert.ok(t.words.length >= 2, `no Arabic tokens: ${JSON.stringify(t)}`);
+  assert.equal(deid.containsIdentifiers('TDM THORAX بن سعيد مراد', t), true);
+  assert.equal(deid.containsIdentifiers(deid.scrub('TDM THORAX بن سعيد مراد', t), t), false);
+  assert.ok(deid.scrub('TDM THORAX بن سعيد مراد', t).startsWith('TDM THORAX'));
+  // DICOM PN with an Arabic ideographic group: both groups are identity
+  const pn = deid.identifierTokens({ names: ['BENSAID^MOURAD=بن سعيد^مراد'] });
+  assert.equal(deid.containsIdentifiers('scanner مراد', pn), true);
+  assert.equal(deid.containsIdentifiers('scanner Mourad', pn), true);
+});
+
+test('property: Arabic identity (variants, harakat, Arabic digits) is detected and scrubbed', () => {
+  const r = rng(SEED + 3);
+  for (let k = 0; k < 400; k++) {
+    const first = r.pick(AR_FIRST), last = r.pick(AR_LAST);
+    const id = `P${r.int(1000, 99999)}`;
+    const dob = `19${r.int(30, 99)}-0${r.int(1, 9)}-${String(r.int(10, 28))}`;
+    const [y, m, d] = dob.split('-');
+    const tokens = deid.identifierTokens({ names: [`${last} ${first}`], ids: [id], birthDate: dob });
+    const nameWords = `${last} ${first}`.split(' ').filter((w) => [...w].length >= 3);
+    const identity = [...nameWords.map((w) => arVariant(r, w)), r.pick([id, toArabicDigits(id)]), r.pick([`${d}/${m}/${y}`, toArabicDigits(`${d}/${m}/${y}`), toArabicDigits(`${y}/${m}/${d}`)])];
+    const clinical = r.shuffle([...AR_CLINICAL, ...CLINICAL]).slice(0, r.int(1, 3));
+    const text = r.shuffle([...clinical, ...r.shuffle(identity).slice(0, r.int(1, 3))]).join(' ');
+    const ctx = `seed=${SEED} case=${k} text="${text}"`;
+    assert.ok(deid.containsIdentifiers(text, tokens), `${ctx}: Arabic identity not detected`);
+    const out = deid.scrub(text, tokens);
+    assert.equal(deid.containsIdentifiers(out, tokens), false, `${ctx}: still identifying → "${out}"`);
+    assert.equal(deid.scrub(out, tokens), out, `${ctx}: not idempotent`);
     assert.equal(deid.containsIdentifiers(clinical.join(' '), tokens), false, `${ctx}: false positive`);
   }
 });

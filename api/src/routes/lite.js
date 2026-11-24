@@ -178,8 +178,9 @@ r.get(
   ah(async (req, res) => {
     const sh = await liveShare(req.params.token);
     const s = await one(
-      `SELECT s.description, s.modalities, s.dicom_patient_name, s.dicom_patient_id, s.dicom_birth_date, s.accession,
-              p.full_name AS patient_full_name
+      `SELECT s.description, s.modalities, s.dicom_patient_name, s.dicom_patient_name_raw, s.dicom_patient_id, s.dicom_birth_date, s.accession,
+              p.full_name AS patient_full_name,
+              (SELECT string_agg(pi.dicom_name, ' ') FROM patient_identifiers pi WHERE pi.patient_id = s.patient_id) AS raw_names
        FROM studies s LEFT JOIN patients p ON p.id = s.patient_id WHERE s.id=$1`,
       [sh.study_id]
     );
