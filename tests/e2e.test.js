@@ -401,7 +401,7 @@ test('full workflow', async (t) => {
     assert.ok(arabic.tags[0].StudyDescription.includes('TDM THORAX'));
   });
 
-  await t.test('archive: a truncated ZIP is never delivered as a clean 200', async () => {
+  await t.test('archive: a truncated ZIP is never a clean 200, a valid ZIP is never cut', async () => {
     const any = (await rad.call('GET', '/studies')).body.studies[0];
     const url = `/studies/${any.id}/download`;
     const fetchZip = async () => {
@@ -409,7 +409,8 @@ test('full workflow', async (t) => {
       const buf = Buffer.from(await res.arrayBuffer()); // must throw if the transfer is broken
       return { status: res.status, length: res.headers.get('content-length'), buf };
     };
-    const isCompleteZip = (b) => b.length >= 22 && b.readUInt32LE(b.length - 22) === 0x06054b50;
+    const { hasValidZipEnd } = await import('../api/src/lib/http.js');
+    const isCompleteZip = (b) => hasValidZipEnd(b.subarray(-65557));
 
     // normal: complete ZIP, with a Content-Length so browsers show progress and detect truncation themselves
     const ok = await fetchZip();
@@ -417,6 +418,18 @@ test('full workflow', async (t) => {
     assert.ok(ok.length, 'Content-Length missing');
     assert.equal(Number(ok.length), ok.buf.length);
     assert.ok(isCompleteZip(ok.buf));
+
+    // a VALID archive through the direct stream (older Orthanc, no job): must arrive complete, never be cut by the guard
+    mock.state.archiveJobs = false;
+    let direct;
+    try {
+      direct = await fetchZip();
+    } catch (e) {
+      direct = { error: e.message };
+    }
+    mock.state.archiveJobs = true;
+    assert.ok(!direct.error, `valid archive via direct stream was cut: ${direct.error}`);
+    assert.ok(isCompleteZip(direct.buf), 'valid archive via direct stream arrived incomplete');
 
     // Orthanc cuts the archive cleanly (no length, no chunking) → the client must see an error
     for (const [jobs, mode] of [[true, 'truncate-clean'], [false, 'truncate-clean'], [true, 'short-length']]) {

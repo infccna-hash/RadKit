@@ -188,7 +188,7 @@ export function startMockOrthanc(port) {
     studies.delete(req.params.id);
     res.json({});
   });
-  // A small but valid ZIP: one stored file + central directory + EOCD
+  // A small but valid ZIP like Orthanc's: one stored file + central directory + EOCD + the comment Orthanc writes
   function zipFor(id) {
     const name = Buffer.from(`${id}.dcm`);
     const data = Buffer.alloc(20000, 7);
@@ -200,7 +200,9 @@ export function startMockOrthanc(port) {
     const cdOff = 30 + name.length + data.length;
     const eocd = Buffer.alloc(22); eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(1, 8); eocd.writeUInt16LE(1, 10);
     eocd.writeUInt32LE(46 + name.length, 12); eocd.writeUInt32LE(cdOff, 16);
-    return Buffer.concat([lh, name, data, cd, name, eocd]);
+    const comment = Buffer.from('Created by Orthanc'); // real Orthanc archives end with this, not with the EOCD
+    eocd.writeUInt16LE(comment.length, 20);
+    return Buffer.concat([lh, name, data, cd, name, eocd, comment]);
   }
   /** Close-delimited body (no Content-Length, no chunking) cut cleanly: exactly what real Orthanc did in the field */
   function sendTruncatedClean(req, buf) {
@@ -241,7 +243,10 @@ export function startMockOrthanc(port) {
     }
     const buf = zipFor(req.params.id);
     if (state.archive === 'truncate-clean') return sendTruncatedClean(req, buf);
-    res.type('application/zip').send(buf);
+    // real Orthanc streams /studies/{id}/archive without Content-Length (chunked)
+    res.writeHead(200, { 'Content-Type': 'application/zip' });
+    res.write(buf.subarray(0, 1000));
+    res.end(buf.subarray(1000));
   });
 
   /** Seed a study directly: {patient:{...}, study:{...}, series:[{uid, number, modality, description, protocol, instances:[{sop, n, frames}]}]} */

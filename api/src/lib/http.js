@@ -9,19 +9,40 @@ export function streamTo(res, webBody, { zip = false } = {}) {
   });
 }
 
+const EOCD_SIG = 0x06054b50;
+const EOCD_LEN = 22;
+const MAX_TAIL = EOCD_LEN + 0xffff; // EOCD + the longest possible archive comment
+
 /**
- * Every ZIP ends with an End-Of-Central-Directory record (PK\x05\x06, 22 bytes, no comment in Orthanc archives).
- * If the upstream stops without it, fail the stream: the client gets a broken transfer, never a clean 200 + bad file.
+ * True if `tail` (the last bytes of a stream) ends with a structurally valid End-Of-Central-Directory record:
+ * signature PK\x05\x06, followed by exactly the comment length it declares. Orthanc writes a comment
+ * ("Created by Orthanc"), so the record is NOT necessarily the last 22 bytes.
+ */
+export function hasValidZipEnd(tail) {
+  for (let i = tail.length - EOCD_LEN; i >= 0 && i >= tail.length - MAX_TAIL; i--) {
+    if (tail.readUInt32LE(i) === EOCD_SIG && i + EOCD_LEN + tail.readUInt16LE(i + 20) === tail.length) return true;
+  }
+  return false;
+}
+
+/**
+ * Fail the stream if the upstream stops before the end of the ZIP: the client gets a broken transfer,
+ * never a clean 200 with a truncated file. Keeps only the last 64 KiB in memory, without copying per chunk.
  */
 export function zipGuard() {
-  let tail = Buffer.alloc(0);
+  let parts = [];
+  let len = 0;
   return new Transform({
     transform(chunk, _enc, cb) {
-      tail = chunk.length >= 22 ? Buffer.from(chunk.subarray(chunk.length - 22)) : Buffer.concat([tail, chunk]).subarray(-22);
+      parts.push(chunk);
+      len += chunk.length;
+      while (parts.length > 1 && len - parts[0].length >= MAX_TAIL) len -= parts.shift().length;
       cb(null, chunk);
     },
     flush(cb) {
-      if (tail.length === 22 && tail.readUInt32LE(0) === 0x06054b50) cb();
+      const buf = Buffer.concat(parts, len);
+      parts = [];
+      if (hasValidZipEnd(buf.length > MAX_TAIL ? buf.subarray(buf.length - MAX_TAIL) : buf)) cb();
       else cb(new Error('archive ZIP incomplète (fin de fichier absente)'));
     },
   });
